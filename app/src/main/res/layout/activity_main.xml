@@ -3,7 +3,9 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:fillViewport="true"
+    android:focusable="true"
+    android:focusableInTouchMode="true">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -339,6 +341,33 @@
                 android:text=""
                 android:textColor="#555555"
                 android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="运行日志"
+                android:textStyle="bold"
+                android:textSize="13sp" />
+
+            <ScrollView
+                android:id="@+id/logScroll"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:layout_marginTop="4dp"
+                android:background="#1e1e1e"
+                android:padding="8dp"
+                android:scrollbars="vertical">
+
+                <TextView
+                    android:id="@+id/tvLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text=""
+                    android:textColor="#4caf50"
+                    android:textSize="11sp" />
+            </ScrollView>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

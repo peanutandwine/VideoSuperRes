@@ -79,7 +79,7 @@ class Transcoder(
         var audioDone = false
 
         try {
-            listener(Progress.Status("初始化解封装..."))
+            listener(Progress.Status("[1/6] 打开视频文件..."))
             extractor = MediaExtractor()
             extractor.setDataSource(input.fileDescriptor)
 
@@ -102,10 +102,14 @@ class Transcoder(
             val inH = inFmt.getInteger(MediaFormat.KEY_HEIGHT)
             val durationUs = if (inFmt.containsKey(MediaFormat.KEY_DURATION))
                 inFmt.getLong(MediaFormat.KEY_DURATION) else 0L
+            val durSec = durationUs / 1_000_000
+            listener(Progress.Status("  输入: ${inW}x${inH}, 时长 ${durSec}s"))
+            listener(Progress.Status("  输出: ${outWidth}x${outHeight} @ ${frameRate}fps, $bitrateBps bps"))
+            listener(Progress.Status("  编码: $videoMime, 容器: $container"))
             Log.i(TAG, "in ${inW}x$inH -> out ${outWidth}x$outHeight @ ${frameRate}fps, $bitrateBps bps, mime=$videoMime, container=$container")
 
             // ---- encoder ----
-            listener(Progress.Status("配置硬件编码器..."))
+            listener(Progress.Status("[2/6] 配置硬件编码器..."))
             val encFmt = MediaFormat.createVideoFormat(videoMime, outWidth, outHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT,
                     MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -119,7 +123,7 @@ class Transcoder(
             encoder.start()
 
             // ---- EGL + renderer ----
-            listener(Progress.Status("初始化 GPU 渲染..."))
+            listener(Progress.Status("[3/6] 初始化 GPU 渲染..."))
             renderer = TextureRenderer()
             val texId = renderer.getTextureId()
             renderer.init()
@@ -128,7 +132,7 @@ class Transcoder(
             egl.setSurfaceTextureSize(inW, inH)
 
             // ---- decoder ----
-            listener(Progress.Status("启动硬件解码器..."))
+            listener(Progress.Status("[4/6] 启动硬件解码器..."))
             decoder = MediaCodec.createDecoderByType(inFmt.getString(MediaFormat.KEY_MIME)!!)
             decoder.configure(inFmt, egl.inputSurface, null, 0)
             decoder.start()
@@ -159,6 +163,9 @@ class Transcoder(
             var sawInputEos = false
             var videoEos = false
             var lastPct = -1
+
+            // ---- muxer start ----
+            listener(Progress.Status("[5/6] 开始写入视频..."))
 
             while (!cancelled) {
                 // Feed decoder
@@ -271,12 +278,14 @@ class Transcoder(
 
             // Remux if needed (MOV/MKV/AVI)
             if (container.needsRemux && tmpMp4.exists()) {
-                listener(Progress.Status("转换容器为 .${container.ext}..."))
+                listener(Progress.Status("[6/6] 转换容器为 .${container.ext}..."))
                 val ok = Remuxer.remux(tmpMp4, outputFile, container)
                 if (!ok) throw RuntimeException("容器转换失败（$container）")
                 tmpMp4.delete()
             }
 
+            val totalSec = (System.currentTimeMillis() - startTime) / 1000
+            listener(Progress.Status("完成！总耗时 ${totalSec}s"))
             listener(Progress.Done(outputFile.absolutePath))
         } catch (t: Throwable) {
             Log.e(TAG, "transcode failed", t)

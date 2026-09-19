@@ -33,8 +33,10 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences("settings", MODE_PRIVATE)
     }
 
-    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { onPicked(it) }
+    private val pickVideo = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { onVideoPicked(it) }
+        }
     }
 
     private val receiver = object : BroadcastReceiver() {
@@ -48,6 +50,12 @@ class MainActivity : AppCompatActivity() {
                     b.progress.progress = pct
                     b.tvStatus.text = "处理中 $pct%"
                     b.tvEta.text = formatEta(elapsed, eta)
+                    appendLog("  [${pct}%] ${formatEta(elapsed, eta)}")
+                }
+                TranscodeService.ACTION_STATUS -> {
+                    val msg = i.getStringExtra(TranscodeService.EXTRA_MSG) ?: ""
+                    appendLog(msg)
+                    b.tvStatus.text = msg
                 }
                 TranscodeService.ACTION_STATUS -> {
                     b.tvStatus.text = i.getStringExtra(TranscodeService.EXTRA_MSG)
@@ -57,6 +65,7 @@ class MainActivity : AppCompatActivity() {
                     b.progress.visibility = android.view.View.GONE
                     b.tvStatus.setTextColor(Color.parseColor("#2e7d32"))
                     b.tvStatus.text = "完成！输出文件：$path"
+                    b.tvEta.text = ""
                     b.btnStart.isEnabled = inputUri != null
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("处理完成")
@@ -74,7 +83,9 @@ class MainActivity : AppCompatActivity() {
                 TranscodeService.ACTION_ERROR -> {
                     b.progress.visibility = android.view.View.GONE
                     b.tvStatus.setTextColor(Color.RED)
-                    b.tvStatus.text = "错误：${i?.getStringExtra(TranscodeService.EXTRA_MSG)}"
+                    val msg = "错误：${i?.getStringExtra(TranscodeService.EXTRA_MSG)}"
+                    b.tvStatus.text = msg
+                    appendLog("!! $msg")
                     b.btnStart.isEnabled = inputUri != null
                 }
             }
@@ -87,22 +98,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(b.root)
         setSupportActionBar(findViewById(R.id.toolbar))
 
+        requestPermissions()
+
         b.btnPick.setOnClickListener {
-            // Show chooser with gallery + file manager options
-            val galleryIntent = Intent(Intent.ACTION_PICK,
-                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI).apply {
-                    type = "video/*"
-                }
-            val docIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            // ACTION_GET_CONTENT shows ALL apps that can open video/* (Gallery, Files, MT Manager, etc.)
+            val base = Intent(Intent.ACTION_GET_CONTENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "video/*"
             }
-            val chooser = Intent(Intent.ACTION_CHOOSER).apply {
-                putExtra(Intent.EXTRA_INTENT, docIntent)
-                putExtra(Intent.EXTRA_TITLE, "选择视频来源")
-            }
-            // Let the system resolve all available apps (gallery, Files, MT Manager, etc.)
-            pickVideo.launch(arrayOf("video/*"))
+            val chooser = Intent.createChooser(base, "选择视频来源")
+            pickVideo.launch(chooser)
         }
 
         b.sliderBitrate.addOnChangeListener { _, v, _ ->
@@ -200,7 +205,11 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    private fun onPicked(uri: Uri) {
+    private fun onVideoPicked(uri: Uri) {
+        // Take persistable permission so Service can open the file later
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) { /* some apps don't support persistable, it's fine */ }
         inputUri = uri
         val retriever = MediaMetadataRetriever()
         try {
@@ -311,6 +320,11 @@ class MainActivity : AppCompatActivity() {
         val outFile = File(getExternalFilesDir(null), "$baseName.${container.ext}")
 
         b.progress.visibility = android.view.View.VISIBLE
+        b.progress.progress = 0
+        b.tvStatus.text = "准备中..."
+        b.tvEta.text = "正在初始化..."
+        b.tvLog.text = ""
+        appendLog("=== 开始处理 ===")
         b.btnStart.isEnabled = false
         val svc = Intent(this, TranscodeService::class.java).apply {
             data = uri
@@ -329,6 +343,26 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(svc)
         }
+    }
+
+    private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* no-op */ }
+
+    private fun requestPermissions() {
+        val perms = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(android.Manifest.permission.READ_MEDIA_VIDEO)
+            perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            perms.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        permLauncher.launch(perms.toTypedArray())
+    }
+
+    private fun appendLog(msg: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        val line = "[$timestamp] $msg\n"
+        b.tvLog.append(line)
+        b.logScroll.post { b.logScroll.fullScroll(android.view.View.FOCUS_DOWN) }
     }
 
     private fun formatEta(elapsedMs: Long, etaMs: Long): String {

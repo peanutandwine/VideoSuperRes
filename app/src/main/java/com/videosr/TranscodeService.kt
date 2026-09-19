@@ -53,7 +53,10 @@ class TranscodeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) return START_NOT_STICKY
-        val uri = intent.data ?: return START_NOT_STICKY
+        val uri = intent.data ?: run {
+            notify(Intent(ACTION_ERROR).putExtra(EXTRA_MSG, "没有传入文件 URI"))
+            stopSelf(); return START_NOT_STICKY
+        }
         val outW = intent.getIntExtra(EXTRA_OUT_W, 1280)
         val outH = intent.getIntExtra(EXTRA_OUT_H, 720)
         val bitrate = intent.getIntExtra(EXTRA_BITRATE, 8_000_000)
@@ -68,48 +71,65 @@ class TranscodeService : Service() {
 
         val outPath = intent.getStringExtra(EXTRA_OUT_PATH)
         val outFile = outPath?.let { File(it) } ?: File(getExternalFilesDir(null), "output_${System.currentTimeMillis()}.${container.ext}")
-        val pfd: ParcelFileDescriptor? = contentResolver.openFileDescriptor(uri, "r")
 
-        transcoder = Transcoder(pfd!!, outFile, outW, outH, bitrate, fps, mime, container, mode) { progress ->
-            when (progress) {
-                is Transcoder.Progress.Pct -> {
+        Thread {
+            try {
+                val pfd = contentResolver.openFileDescriptor(uri, "r")
+                if (pfd == null) {
                     handler.post {
-                        notify(Intent(ACTION_PROGRESS)
-                            .putExtra(EXTRA_PCT, progress.pct)
-                            .putExtra(EXTRA_ELAPSED, progress.elapsedMs)
-                            .putExtra(EXTRA_ETA, progress.etaMs))
-                        startForeground(NOTI_ID, buildNotification(progress.pct, "处理中 ${progress.pct}%"))
+                        notify(Intent(ACTION_ERROR).putExtra(EXTRA_MSG, "无法打开文件：$uri"))
+                        stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+                    }
+                    return@Thread
+                }
+                transcoder = Transcoder(pfd, outFile, outW, outH, bitrate, fps, mime, container, mode) { progress ->
+                    when (progress) {
+                        is Transcoder.Progress.Pct -> {
+                            handler.post {
+                                notify(Intent(ACTION_PROGRESS)
+                                    .putExtra(EXTRA_PCT, progress.pct)
+                                    .putExtra(EXTRA_ELAPSED, progress.elapsedMs)
+                                    .putExtra(EXTRA_ETA, progress.etaMs))
+                                startForeground(NOTI_ID, buildNotification(progress.pct, "处理中 ${progress.pct}%"))
+                            }
+                        }
+                        is Transcoder.Progress.Status -> {
+                            handler.post {
+                                notify(Intent(ACTION_STATUS).putExtra(EXTRA_MSG, progress.msg))
+                                startForeground(NOTI_ID, buildNotification(-1, progress.msg))
+                            }
+                        }
+                        is Transcoder.Progress.Done -> {
+                            handler.post {
+                                android.media.MediaScannerConnection.scanFile(
+                                    this@TranscodeService,
+                                    arrayOf(progress.outPath),
+                                    arrayOf("video/*"),
+                                    null
+                                )
+                                notify(Intent(ACTION_DONE).putExtra(EXTRA_PATH, progress.outPath))
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                            }
+                        }
+                        is Transcoder.Progress.Error -> {
+                            handler.post {
+                                notify(Intent(ACTION_ERROR).putExtra(EXTRA_MSG, progress.msg))
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                            }
+                        }
                     }
                 }
-                is Transcoder.Progress.Status -> {
-                    handler.post {
-                        notify(Intent(ACTION_STATUS).putExtra(EXTRA_MSG, progress.msg))
-                        startForeground(NOTI_ID, buildNotification(-1, progress.msg))
-                    }
-                }
-                is Transcoder.Progress.Done -> {
-                    handler.post {
-                        android.media.MediaScannerConnection.scanFile(
-                            this@TranscodeService,
-                            arrayOf(progress.outPath),
-                            arrayOf("video/*"),
-                            null
-                        )
-                        notify(Intent(ACTION_DONE).putExtra(EXTRA_PATH, progress.outPath))
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
-                }
-                is Transcoder.Progress.Error -> {
-                    handler.post {
-                        notify(Intent(ACTION_ERROR).putExtra(EXTRA_MSG, progress.msg))
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
+                transcoder!!.transcode()
+            } catch (t: Throwable) {
+                handler.post {
+                    notify(Intent(ACTION_ERROR).putExtra(EXTRA_MSG, "启动失败: ${t.message}"))
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
-        }
-        Thread { transcoder!!.transcode() }.start()
+        }.start()
         return START_NOT_STICKY
     }
 
