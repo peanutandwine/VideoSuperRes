@@ -161,11 +161,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNpuUi() {
-        val hasNpu = NpuChecker.hasNpu(this)
-        val force = prefs.getBoolean("force_ai", false)
-        b.chipAi.isEnabled = hasNpu || force
-        appendLog("NPU 探测: ${if (hasNpu) "成功 - ${NpuChecker.acceleratorInfo()}" else "失败 - 无可用 NNAPI 加速器"}")
-        when {
+        appendLog("正在探测 NPU...")
+        Thread {
+            val hasNpu = NpuChecker.hasNpu(this)
+            runOnUiThread {
+                val force = prefs.getBoolean("force_ai", false)
+                b.chipAi.isEnabled = hasNpu || force
+                appendLog("NPU 探测: ${if (hasNpu) "成功 - ${NpuChecker.acceleratorInfo()}" else "失败 - ${NpuChecker.lastError()}"}")
+                when {
             hasNpu -> {
                 b.tvNpuStatus.text = "已检测到加速器: ${NpuChecker.acceleratorInfo()}"
                 b.tvNpuStatus.setTextColor(Color.parseColor("#2e7d32"))
@@ -174,10 +177,12 @@ class MainActivity : AppCompatActivity() {
                 b.tvNpuStatus.text = "警告：未检测到 NPU，AI 超分将回退到 CPU，速度极慢"
                 b.tvNpuStatus.setTextColor(Color.RED)
             }
-            else -> {
-                b.tvNpuStatus.text = "未检测到 NPU，AI 超分已禁用（可在设置中强制开启）"
+                else -> {
+                    b.tvNpuStatus.text = "未检测到 NPU，AI 超分已禁用（可在设置中强制开启）"
+                }
             }
-        }
+            }
+        }.start()
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
