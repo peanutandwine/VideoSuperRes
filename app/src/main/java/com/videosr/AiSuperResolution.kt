@@ -61,40 +61,93 @@ class AiSuperResolution(context: Context, modelAsset: String, preferGpu: Boolean
 
     fun upscale(input: Bitmap): Bitmap? {
         val interp = interpreter ?: return null
+        val scale = getOutputScale()
         return try {
-            // Resize input to model's expected size
-            val modelIn = Bitmap.createScaledBitmap(input, inputW, inputH, true)
-            val inputBuf = ByteBuffer.allocateDirect(1 * inputH * inputW * 3 * 4)
-                .order(ByteOrder.nativeOrder())
-            val pixels = IntArray(inputW * inputH)
-            modelIn.getPixels(pixels, 0, inputW, 0, 0, inputW, inputH)
-            for (p in pixels) {
-                inputBuf.putFloat(((p shr 16) and 0xFF) / 255f)
-                inputBuf.putFloat(((p shr 8) and 0xFF) / 255f)
-                inputBuf.putFloat((p and 0xFF) / 255f)
-            }
-            inputBuf.rewind()
+            val inW = input.width
+            val inH = input.height
+            val outW = (inW * scale).toInt()
+            val outH = (inH * scale).toInt()
+            val result = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
 
-            val outBuf = ByteBuffer.allocateDirect(1 * outputH * outputW * 3 * 4)
-                .order(ByteOrder.nativeOrder())
-            interp.run(inputBuf, outBuf)
-            outBuf.rewind()
+            // If input matches model size, single-pass; otherwise tile
+            if (inW <= inputW && inH <= inputH) {
+                val tile = Bitmap.createScaledBitmap(input, inputW, inputH, true)
+                val tileOut = runModel(tile)
+                if (tileOut != null) {
+                    // Scale tile output to final size
+                    val scaled = Bitmap.createScaledBitmap(tileOut, outW, outH, true)
+                    result.setPixels(IntArray(outW*outH).also { scaled.getPixels(it,0,outW,0,0,outW,outH) },
+                        0, outW, 0, 0, outW, outH)
+                    tileOut.recycle()
+                }
+                tile.recycle()
+            } else {
+                // Tile-based inference with overlap
+                val overlap = 8
+                val tileW = inputW
+                val tileH = inputH
+                val stepX = tileW - overlap
+                val stepY = tileH - overlap
+                val outTileW = tileW * scale.toInt()
+                val outTileH = tileH * scale.toInt()
 
-            val outPixels = IntArray(outputW * outputH)
-            for (y in 0 until outputH) {
-                for (x in 0 until outputW) {
-                    val r = (outBuf.float * 255).toInt().coerceIn(0, 255)
-                    val g = (outBuf.float * 255).toInt().coerceIn(0, 255)
-                    val b = (outBuf.float * 255).toInt().coerceIn(0, 255)
-                    outPixels[y * outputW + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                for (ty in 0 until inH step stepY) {
+                    for (tx in 0 until inW step stepX) {
+                        val sx = tx.coerceAtMost(inW - tileW)
+                        val sy = ty.coerceAtMost(inH - tileH)
+                        val tile = Bitmap.createBitmap(input, sx, sy, tileW, tileH)
+                        val tileOut = runModel(tile)
+                        if (tileOut != null) {
+                            // Copy tile output to result
+                            val srcX = 0; val srcY = 0
+                            val dstX = (sx * scale).toInt()
+                            val dstY = (sy * scale).toInt()
+                            val copyW = outTileW; val copyH = outTileH
+                            val outPixels = IntArray(copyW * copyH)
+                            tileOut.getPixels(outPixels, 0, copyW, 0, 0, copyW, copyH)
+                            result.setPixels(outPixels, 0, copyW, dstX, dstY, copyW, copyH)
+                            tileOut.recycle()
+                        }
+                        tile.recycle()
+                    }
                 }
             }
-            Bitmap.createBitmap(outputW, outputH, Bitmap.Config.ARGB_8888).apply {
-                setPixels(outPixels, 0, outputW, 0, 0, outputW, outputH)
-            }
+            result
         } catch (t: Throwable) {
             Log.e(TAG, "AI SR run failed", t)
             null
+        }
+    }
+
+    private fun runModel(tile: Bitmap): Bitmap? {
+        val interp = interpreter ?: return null
+        val inputBuf = ByteBuffer.allocateDirect(1 * inputH * inputW * 3 * 4)
+            .order(ByteOrder.nativeOrder())
+        val pixels = IntArray(inputW * inputH)
+        tile.getPixels(pixels, 0, inputW, 0, 0, inputW, inputH)
+        for (p in pixels) {
+            inputBuf.putFloat(((p shr 16) and 0xFF) / 255f)
+            inputBuf.putFloat(((p shr 8) and 0xFF) / 255f)
+            inputBuf.putFloat((p and 0xFF) / 255f)
+        }
+        inputBuf.rewind()
+
+        val outBuf = ByteBuffer.allocateDirect(1 * outputH * outputW * 3 * 4)
+            .order(ByteOrder.nativeOrder())
+        interp.run(inputBuf, outBuf)
+        outBuf.rewind()
+
+        val outPixels = IntArray(outputW * outputH)
+        for (y in 0 until outputH) {
+            for (x in 0 until outputW) {
+                val r = (outBuf.getFloat() * 255).toInt().coerceIn(0, 255)
+                val g = (outBuf.getFloat() * 255).toInt().coerceIn(0, 255)
+                val b = (outBuf.getFloat() * 255).toInt().coerceIn(0, 255)
+                outPixels[y * outputW + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return Bitmap.createBitmap(outputW, outputH, Bitmap.Config.ARGB_8888).apply {
+            setPixels(outPixels, 0, outputW, 0, 0, outputW, outputH)
         }
     }
 

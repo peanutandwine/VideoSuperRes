@@ -150,7 +150,11 @@ class Transcoder(
                     if (inAudioFmt != null) {
                         pumpAudio(extractor!!, audioTrack, inAudioFmt, container) { bytes, info, fmt ->
                             if (audioFormat == null) audioFormat = fmt
-                            audioQueue.put(bytes to info)
+                            if (!audioQueue.offer(bytes to info)) {
+                                // Drop oldest audio frame if queue is full (backpressure)
+                                audioQueue.poll()
+                                audioQueue.offer(bytes to info)
+                            }
                         }
                     }
                 } catch (t: Throwable) {

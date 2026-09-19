@@ -30,5 +30,7 @@ object Remuxer {
         }
     }
 
-    private fun shellQuote(s: String): String = "\"" + s.replace("\"", "\\\"") + "\""
+    // FFmpegKit.execute does not invoke a shell, but we quote paths anyway
+    // to handle spaces and special chars in the argument parser.
+    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 }

@@ -41,27 +41,33 @@ object NpuChecker {
         Log.i(TAG, "SoC model: '$soc', hardware: '$hardware'")
 
         return when {
-            // Qualcomm Snapdragon — SMxxxx naming, Hexagon NPU
+            // Qualcomm Snapdragon — whitelist of known Hexagon NPU parts
             soc.startsWith("SM") -> {
                 val digits = soc.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }
                 val part = digits.toIntOrNull() ?: 0
-                acceleratorName = "Snapdragon $soc (Hexagon NPU)"
-                // Any SM-series with a known Hexagon NPU
-                val hasHexagon = part >= 8150 || (part in 6000..8099 && part % 100 >= 50) ||
-                                 soc.startsWith("SM8") || soc.startsWith("SM7") ||
-                                 soc.startsWith("SM6") || soc.startsWith("SM4")
+                // Whitelist: flagship and upper-mid parts with real Hexagon NPU
+                val hasHexagon = when {
+                    // 8-series flagship (845+ has Hexagon, 8 Gen 1+ has strong NPU)
+                    part in 845..899 -> true
+                    part in 8150..8999 -> true
+                    // 7-series upper-mid (765G+, 778G, 7+ Gen1/2)
+                    part in 765..799 -> true
+                    part in 8000..8999 -> true
+                    else -> false
+                }
                 if (hasHexagon) {
+                    acceleratorName = "Snapdragon $soc (Hexagon NPU)"
                     Log.i(TAG, "Detected Qualcomm Hexagon NPU: $soc")
                     true
                 } else {
-                    lastError = "Snapdragon $soc — Hexagon NPU unknown"
+                    lastError = "Snapdragon $soc — no known Hexagon NPU"
                     false
                 }
             }
-            // MediaTek Dimensity / Helio
-            soc.contains("DIMENSITY") || soc.startsWith("MT6") || soc.startsWith("MT8") -> {
+            // MediaTek Dimensity — only Dimensity (Helio is mostly no APU)
+            soc.contains("DIMENSITY") -> {
                 acceleratorName = "MediaTek $soc (APU)"
-                Log.i(TAG, "Detected MediaTek APU: $soc")
+                Log.i(TAG, "Detected MediaTek Dimensity APU: $soc")
                 true
             }
             // Google Tensor

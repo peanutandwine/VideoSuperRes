@@ -57,9 +57,6 @@ class MainActivity : AppCompatActivity() {
                     appendLog(msg)
                     b.tvStatus.text = msg
                 }
-                TranscodeService.ACTION_STATUS -> {
-                    b.tvStatus.text = i.getStringExtra(TranscodeService.EXTRA_MSG)
-                }
                 TranscodeService.ACTION_DONE -> {
                     val path = i?.getStringExtra(TranscodeService.EXTRA_PATH)
                     b.progress.visibility = android.view.View.GONE
