@@ -164,9 +164,10 @@ class MainActivity : AppCompatActivity() {
         val hasNpu = NpuChecker.hasNpu(this)
         val force = prefs.getBoolean("force_ai", false)
         b.chipAi.isEnabled = hasNpu || force
+        appendLog("NPU 探测: ${if (hasNpu) "成功 - ${NpuChecker.acceleratorInfo()}" else "失败 - 无可用 NNAPI 加速器"}")
         when {
             hasNpu -> {
-                b.tvNpuStatus.text = "已检测到 NPU，AI 超分可用"
+                b.tvNpuStatus.text = "已检测到加速器: ${NpuChecker.acceleratorInfo()}"
                 b.tvNpuStatus.setTextColor(Color.parseColor("#2e7d32"))
             }
             force -> {

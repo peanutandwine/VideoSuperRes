@@ -141,6 +141,9 @@ class Transcoder(
             var inAudioFmt: MediaFormat? = null
             if (audioTrack >= 0) {
                 inAudioFmt = extractor.getTrackFormat(audioTrack)
+                listener(Progress.Status("  音频轨道: ${inAudioFmt?.getString(MediaFormat.KEY_MIME)}, ${inAudioFmt?.getInteger(MediaFormat.KEY_SAMPLE_RATE)}Hz"))
+            } else {
+                listener(Progress.Status("  无音频轨道"))
             }
             val audioThread = Thread {
                 try {
@@ -166,6 +169,7 @@ class Transcoder(
 
             // ---- muxer start ----
             listener(Progress.Status("[5/6] 开始写入视频..."))
+            val muxerStartTime = System.currentTimeMillis()
 
             while (!cancelled) {
                 // Feed decoder
@@ -189,7 +193,9 @@ class Transcoder(
                 when {
                     outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> {}
                     outIndexChanged(outIdx) -> {
-                        Log.i(TAG, "decoder format: ${decoder.outputFormat}")
+                        val fmt = decoder.outputFormat
+                        Log.i(TAG, "decoder format: $fmt")
+                        listener(Progress.Status("  解码器输出: ${fmt.getString(MediaFormat.KEY_MIME)}, ${fmt.getInteger(MediaFormat.KEY_WIDTH)}x${fmt.getInteger(MediaFormat.KEY_HEIGHT)}"))
                     }
                     outIdx >= 0 -> {
                         val render = info.size > 0
@@ -223,6 +229,7 @@ class Transcoder(
                         encIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break
                         encIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             Log.i(TAG, "encoder format: ${encoder.outputFormat}")
+                            listener(Progress.Status("  编码器输出格式: ${encoder.outputFormat}"))
                             if (muxer == null) {
                                 muxer = MediaMuxer(tmpMp4.absolutePath, container.muxerFormat)
                             }
