@@ -1,16 +1,17 @@
 package com.videosr
 
-import android.content.Context
 import android.os.Build
 import android.util.Log
-import org.tensorflow.lite.nnapi.NnApiDelegate
-import java.io.File
 
 /**
- * Probes NNAPI availability by trying to construct an NnApiDelegate.
- * On modern Android, NnApiDelegate() constructor throws if no NNAPI
- * driver/service is available. We also try listing the available
- * accelerators via NNAPI's device enumeration.
+ * NPU detection — mirrors the approach used by localdream.
+ *
+ * True NPU acceleration requires vendor SDKs (Qualcomm QNN for Hexagon,
+ * MediaTek NeuroPilot for APU). TFLite NNAPI is unreliable on many
+ * devices even when an NPU physically exists.
+ *
+ * We currently detect Qualcomm Snapdragon SM-series chips that ship with
+ * Hexagon NPU. MediaTek Kirin/Tensor detection is heuristic.
  */
 object NpuChecker {
     private const val TAG = "NpuChecker"
@@ -19,7 +20,7 @@ object NpuChecker {
     @Volatile private var acceleratorName: String? = null
     @Volatile private var lastError: String? = null
 
-    fun hasNpu(context: Context): Boolean {
+    fun hasNpu(context: android.content.Context): Boolean {
         cached?.let { return it }
         val result = probe()
         cached = result
@@ -30,27 +31,61 @@ object NpuChecker {
     fun lastError(): String = lastError ?: ""
 
     private fun probe(): Boolean {
-        lastError = null
-
-        // NNAPI requires Android 8.1 (API 27) minimum
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
-            lastError = "API ${Build.VERSION.SDK_INT} < 27, NNAPI 不可用"
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            lastError = "API < 31, cannot detect SoC"
             return false
         }
 
-        try {
-            // Just constructing the delegate is enough — NNAPI throws
-            // if the NNAPI service / drivers are unavailable.
-            val delegate = NnApiDelegate()
-            acceleratorName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                Build.SOC_MODEL else "NNAPI"
-            Log.i(TAG, "NNAPI probe SUCCESS: accelerator=$acceleratorName")
-            delegate.close()
-            return true
-        } catch (t: Throwable) {
-            lastError = "${t.javaClass.simpleName}: ${t.message}"
-            Log.e(TAG, "NNAPI probe FAILED", t)
-            return false
+        val soc = Build.SOC_MODEL.uppercase()
+        val hardware = Build.HARDWARE.uppercase()
+        Log.i(TAG, "SoC model: '$soc', hardware: '$hardware'")
+
+        return when {
+            // Qualcomm Snapdragon — SMxxxx naming, Hexagon NPU
+            soc.startsWith("SM") -> {
+                val digits = soc.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }
+                val part = digits.toIntOrNull() ?: 0
+                acceleratorName = "Snapdragon $soc (Hexagon NPU)"
+                // Any SM-series with a known Hexagon NPU
+                val hasHexagon = part >= 8150 || (part in 6000..8099 && part % 100 >= 50) ||
+                                 soc.startsWith("SM8") || soc.startsWith("SM7") ||
+                                 soc.startsWith("SM6") || soc.startsWith("SM4")
+                if (hasHexagon) {
+                    Log.i(TAG, "Detected Qualcomm Hexagon NPU: $soc")
+                    true
+                } else {
+                    lastError = "Snapdragon $soc — Hexagon NPU unknown"
+                    false
+                }
+            }
+            // MediaTek Dimensity / Helio
+            soc.contains("DIMENSITY") || soc.startsWith("MT6") || soc.startsWith("MT8") -> {
+                acceleratorName = "MediaTek $soc (APU)"
+                Log.i(TAG, "Detected MediaTek APU: $soc")
+                true
+            }
+            // Google Tensor
+            soc.contains("TENSOR") -> {
+                acceleratorName = "Google Tensor"
+                Log.i(TAG, "Detected Google Tensor")
+                true
+            }
+            // Huawei Kirin
+            soc.contains("KIRIN") -> {
+                acceleratorName = "Huawei $soc (NPU)"
+                Log.i(TAG, "Detected Huawei Kirin NPU: $soc")
+                true
+            }
+            // Samsung Exynos
+            soc.contains("EXYNOS") -> {
+                acceleratorName = "Samsung $soc (NPU)"
+                Log.i(TAG, "Detected Samsung Exynos NPU: $soc")
+                true
+            }
+            else -> {
+                lastError = "Unknown SoC: $soc"
+                false
+            }
         }
     }
 }
