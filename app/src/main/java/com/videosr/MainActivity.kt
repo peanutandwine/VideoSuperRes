@@ -170,7 +170,7 @@ class MainActivity : AppCompatActivity() {
                 appendLog("NPU 探测: ${if (hasNpu) "成功 - ${NpuChecker.acceleratorInfo()}" else "失败 - ${NpuChecker.lastError()}"}")
                 when {
             hasNpu -> {
-                b.tvNpuStatus.text = "已检测到加速器: ${NpuChecker.acceleratorInfo()}"
+                b.tvNpuStatus.text = "GPU 加速可用（NPU 后续迭代）"
                 b.tvNpuStatus.setTextColor(Color.parseColor("#2e7d32"))
             }
             force -> {
